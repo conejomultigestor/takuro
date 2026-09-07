@@ -79,6 +79,8 @@
     return near;
   }
   function getLoc(onOk, onFail) {
+    // PRIVACIDAD: las coordenadas exactas (lat/lng) NUNCA salen del dispositivo.
+    // Solo se convierten aquí en una ZONA aproximada, que es lo único que viaja por la red.
     if (!navigator.geolocation) { onFail(new Error("no-gps")); return; }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
@@ -164,7 +166,7 @@
   }
 
   /* ---------------- feed de salas ---------------- */
-  let feed = []; // {id, botId, author, text, ttl, at, expiresAt, likes, liked, mine, room}
+  let feed = []; // {id, botId, author, text, ttl, at, expiresAt, up, down, myVote, pin, mine, room}
   function botByAlias(id, name) { S.idToAlias[id] = name; }
 
   function inPerimeter(b) {
@@ -182,6 +184,9 @@
       text, ttl, at: Date.now(),
       expiresAt: ttl > 0 ? Date.now() + ttl * 1000 : 0,
       likes: mine ? 0 : Math.floor(Math.random() * 120),
+      up: mine ? 0 : Math.floor(Math.random() * 40),
+      down: mine ? 0 : Math.floor(Math.random() * 6),
+      myVote: 0, pin: false,
       liked: false, mine: !!mine,
       room: (mine ? S.curRoom : (room || S.curRoom)),
     };
@@ -347,35 +352,66 @@
       if (f.botId && S.blocked[f.botId]) return false;
       if (f.botId && (!b || b.zone !== S.zone || !inPerimeter(b))) return false;
       return true;
-    });
+    }).sort((a, b) => ((b.pin ? 1 : 0) - (a.pin ? 1 : 0)) || (b.at - a.at));
     $("#feed-count").textContent = list.length + " vivos en tu perímetro (" + S.radius + " km";
     if (!S.premium) $("#feed-count").textContent += " · máx 20 · Discreta+ 50";
     $("#feed-count").textContent += ")";
     box.innerHTML = list.map((f) => {
       const who = f.mine ? "Tú (" + esc(S.name) + ")" : esc(f.author);
-      const ttl = f.ttl > 0;
+      const pinned = !!f.pin;
+      const ttlBar = !pinned && f.ttl > 0;
       return (
-        '<article class="msg">' +
+        '<article class="msg' + (pinned ? " is-pinned" : "") + '">' +
+        (pinned ? '<div class="msg-pin">📌 Fijado por la comunidad</div>' : "") +
         '<div class="msg-head"><span class="msg-author">' + who + '</span><span class="msg-time">' + age(f.at) + '</span></div>' +
         '<div class="msg-body">' + esc(f.text) + '</div>' +
         '<div class="msg-exp">' +
-        '<button class="like-btn" data-like="' + f.id + '">' + (f.liked ? "" : "") + ' ' + f.likes + '</button>' +
-        '<span>' + (ttl ? "se apaga en " + human(remaining(f)) : "permanente") + '</span>' +
+        '<button class="vote-btn' + (f.myVote === 1 ? " is-on" : "") + '" data-vup="' + f.id + '">▲ ' + f.up + '</button>' +
+        '<button class="vote-btn down' + (f.myVote === -1 ? " is-on" : "") + '" data-vdown="' + f.id + '">▼ ' + f.down + '</button>' +
+        '<span class="ttl-hint">' + (pinned ? "permanente · fijado" : (ttlBar ? "se apaga en " + human(remaining(f)) : "permanente")) + '</span>' +
         '</div>' +
-        (ttl ? '<div class="ttl-bar"><div class="ttl-fill" data-ttl="' + f.expiresAt + '" data-dur="' + f.ttl + '" style="width:100%"></div></div>' : "") +
+        (ttlBar ? '<div class="ttl-bar"><div class="ttl-fill" data-ttl="' + f.expiresAt + '" data-dur="' + f.ttl + '" style="width:100%"></div></div>' : "") +
         '</article>'
       );
     }).join("") || '<p class="muted pad">La zona está en silencio. Lanza algo al viento.</p>';
 
-    box.querySelectorAll("[data-like]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const f = feed.find((x) => x.id === btn.getAttribute("data-like"));
-        if (!f || f.liked) return;
-        f.liked = true;
-        f.likes += 1;
-        renderFeed();
-      });
+    box.querySelectorAll("[data-vup]").forEach((btn) => {
+      btn.addEventListener("click", () => voteOn(btn.getAttribute("data-vup"), 1));
     });
+    box.querySelectorAll("[data-vdown]").forEach((btn) => {
+      btn.addEventListener("click", () => voteOn(btn.getAttribute("data-vdown"), -1));
+    });
+  }
+  function voteOn(id, v) {
+    const f = feed.find((x) => x.id === id);
+    if (!f) return;
+    if (LIVE_MODE) {
+      const target = f.myVote === v ? 0 : v;
+      f.myVote = target;
+      Live.vote(id, target);
+      return;
+    }
+    if (f.myVote === v) {
+      f.myVote = 0;
+      if (v === 1) f.up = Math.max(0, f.up - 1); else f.down = Math.max(0, f.down - 1);
+    } else {
+      if (f.myVote === 1) f.up = Math.max(0, f.up - 1);
+      if (f.myVote === -1) f.down = Math.max(0, f.down - 1);
+      f.myVote = v;
+      if (v === 1) f.up++; else f.down++;
+    }
+    if (f.down > 50) {
+      feed = feed.filter((x) => x.id !== f.id);
+      renderFeed();
+      toast("Mensaje eliminado por la comunidad (más de 50 ▼).");
+      return;
+    }
+    if (f.up > 50 && !f.pin) {
+      f.pin = true;
+      f.expiresAt = 0;
+      toast("Mensaje fijado por la comunidad (más de 50 ▲).");
+    }
+    renderFeed();
   }
   const remaining = (f) => f.expiresAt - Date.now();
   function age(ts) {
@@ -964,8 +1000,7 @@
     const app = $("#app");
     app.classList.remove("hidden");
     showView("radar");
-    $("#zone-select").innerHTML = ZONE_NAMES.map((z) => '<option' + (z === S.zone ? " selected" : "") + '>' + esc(z) + '</option>').join("");
-    $("#zone-label").textContent = "Zona: " + S.zone + " · el centro eres tú";
+    updateZoneLabels();
     renderPerimetro();
     renderRoomTabs();
     $("#me-name").textContent = S.name;
@@ -977,6 +1012,11 @@
       Live.sub(S.curRoom);
       Live.requestPresence();
     }
+  }
+  function updateZoneLabels() {
+    const txt = "Zona: " + (S.zone || "según tu ubicación") + " · según tu ubicación";
+    const zl = $("#zone-label"); if (zl) zl.textContent = txt;
+    const zh = $("#zone-here"); if (zh) zh.textContent = txt;
   }
   function renderRadarWrap() { renderBlips(); }
   function tryEnter() {
@@ -1030,6 +1070,7 @@
     getLoc(
       () => {
         S.zone = nearestZone(S.lat, S.lng).name;
+        updateZoneLabels();
         if (freshUser && name.length >= 2) {
           S.name = name;
           if (!S.id) newIdentity();
@@ -1077,9 +1118,27 @@
           id: m.id, botId: null, author: m.name,
           text: m.body, ttl: m.ttl, at: m.at * 1000,
           expiresAt: m.exp ? m.exp * 1000 : 0,
+          up: m.up || 0, down: m.down || 0, myVote: 0, pin: !!m.pin,
           likes: 0, liked: false, mine: m.from === Live.myId(), room: m.room,
         });
         if (m.room === S.curRoom) renderFeed();
+      },
+      onVote: (v) => {
+        const f = feed.find((x) => x.id === v.id);
+        if (!f) return;
+        f.up = v.up; f.down = v.down;
+        if (v.room === S.curRoom) renderFeed();
+      },
+      onVoteDel: (id) => {
+        feed = feed.filter((x) => x.id !== id);
+        renderFeed();
+        toast("Un mensaje fue eliminado por la comunidad (más de 50 ▼).");
+      },
+      onVotePin: (id) => {
+        const f = feed.find((x) => x.id === id);
+        if (f) { f.pin = true; f.expiresAt = 0; }
+        renderFeed();
+        toast("Un mensaje fue fijado por la comunidad (más de 50 ▲).");
       },
       onPresence: (p) => {
         presence = p;
@@ -1147,12 +1206,6 @@
     document.querySelectorAll(".tab-btn").forEach((b) =>
       b.addEventListener("click", () => showView(b.dataset.view))
     );
-    $("#zone-select").addEventListener("change", (e) => {
-      S.zone = e.target.value; save();
-      $("#zone-label").textContent = "Zona: " + S.zone + " · el centro eres tú";
-      if (LIVE_MODE && window.__takuro_kp) { Live.setInfo(S.name, S.zone, S.radius, window.__takuro_kp.pubB64); Live.requestPresence(); }
-      renderBlips(); renderFeed();
-    });
     $("#radius-range").addEventListener("input", (e) => {
       S.radius = Number(e.target.value);
       $("#radius-value").textContent = S.radius + " km";
@@ -1161,13 +1214,16 @@
       renderBlips(); renderFeed();
     });
     $("#btn-locate").addEventListener("click", () => {
-      getLoc((pos) => {
-        const near = nearestZone(S.lat, S.lng);
-        S.zone = near.name; $("#zone-select").value = near.name;
-        $("#zone-label").textContent = "Zona por tu ubicación real: " + near.name + " · el centro eres tú";
-        save(); renderBlips(); renderFeed();
-        toast("Ubicación leída. Perímetro " + S.radius + " km.");
-      }, () => toast("GPS bloqueado. Sigue con zona manual."));
+      getLoc(() => {
+        S.zone = nearestZone(S.lat, S.lng).name;
+        save(); updateZoneLabels();
+        if (LIVE_MODE) {
+          Live.setInfo(S.name, S.zone, S.radius, window.__takuro_kp ? window.__takuro_kp.pubB64 : "");
+          Live.requestPresence();
+        }
+        renderBlips(); renderFeed();
+        toast("Ubicación real leída. Zona: " + S.zone);
+      }, () => toast("No pude leer el GPS. Sigues en tu zona: " + (S.zone || "—")));
     });
 
     $("#btn-radar-send").addEventListener("click", () => {
