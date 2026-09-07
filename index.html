@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0a0a12" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="./manifest.json" />
+  <title>Takuro</title>
+  <link rel="stylesheet" href="./css/estilo.css" />
+</head>
+<body>
+
+  <!-- Pantalla: puerta de entrada / camuflaje -->
+  <div id="gate" class="screen screen-on">
+    <div class="gate-box">
+      <div class="logo-ring"><span class="logo-core">T</span></div>
+      <h1 class="gate-title">TAKURO</h1>
+      <p class="gate-sub">El mensaje que vive en la sombra</p>
+      <button id="btn-open-gate" class="btn btn-primary">Entrar</button>
+      <p class="gate-pin">PIN opcional para despertar la app</p>
+      <input id="pin-input" type="password" inputmode="numeric" maxlength="6" placeholder="••••••" autocomplete="off" />
+      <p id="loc-status" class="loc-status hidden"></p>
+      <button id="btn-retry-loc" class="btn btn-ghost hidden" style="width:100%">↻ Reintentar permiso de ubicación</button>
+    </div>
+  </div>
+  <noscript>Necesitas JavaScript para usar Takuro.</noscript>
+
+  <!-- Pantalla: inicio (onboarding) -->
+  <div id="onboarding" class="screen hidden">
+    <div class="pad">
+      <div class="logo-ring small"><span class="logo-core">T</span></div>
+      <h2>Elige tu nombre en la sombra</h2>
+      <p class="muted">Sin registro. Sin teléfono. Tu identidad es una llave criptográfica que se genera en este dispositivo.</p>
+      <input id="alias-input" type="text" maxlength="24" placeholder="Tu alias (ej. Eco, Sombra, Kuro)" autocomplete="off" />
+      <p id="alias-error" class="error hidden">Mínimo 2 caracteres.</p>
+      <button id="btn-start" class="btn btn-primary">Crear identidad</button>
+      <p id="loc-status" class="loc-status hidden"></p>
+      <button id="btn-retry-loc" class="btn btn-ghost hidden" style="width:100%">↻ Reintentar permiso de ubicación</button>
+      <p class="muted small">Al continuar aceptas: 18+ / eres responsable de tu discreción. La protección contra capturas es de mejor esfuerzo, no infalible. Tu ubicación aproximada (al radio de tu zona) es necesaria y se transforma inmediatamente en un código de zona: nadie ve tu punto exacto.</p>
+    </div>
+  </div>
+
+  <!-- App principal -->
+  <div id="app" class="screen hidden">
+    <main id="views">
+
+      <!-- VISTA: Radar -->
+      <section id="view-radar" class="view">
+        <header class="topbar">
+          <div>
+            <h2 class="tab-title">Radar</h2>
+            <p id="zone-label" class="zone-label">Zona sin ubicación</p>
+          </div>
+          <div class="top-actions">
+            <span class="chip chip-live" id="presence-chip">Presente</span>
+          </div>
+        </header>
+        <div class="radar-controls">
+          <div class="ctrl-row">
+            <label class="lab" for="zone-select">Zona</label>
+            <select id="zone-select"></select>
+            <button id="btn-locate" class="btn-icon" title="Usar mi ubicación">◉</button>
+          </div>
+          <div class="ctrl-row">
+            <label class="lab" for="radius-range" id="radius-label">Perímetro (TÚ eres el centro)</label>
+            <input type="range" id="radius-range" min="2" max="50" step="1" value="15" />
+            <span class="radius-value" id="radius-value">15 km</span>
+          </div>
+        </div>
+        <div class="radar-canvas-wrap">
+          <div id="radar-ring" class="radar-ring">
+            <canvas id="radar-canvas" width="300" height="300"></canvas>
+          </div>
+          <div id="nearby-users" class="nearby-users"></div>
+        </div>
+        <div id="room-tabs" class="room-tabs"></div>
+        <div class="feed-head">
+          <h3 id="feed-title">—</h3>
+          <span id="feed-count" class="muted small"></span>
+        </div>
+        <div id="radar-feed" class="feed"></div>
+        <div class="composer radar-composer">
+          <input id="radar-input" type="text" placeholder="Lanzar al viento…" autocomplete="off" />
+          <select id="radar-ttl" class="radar-ttl">
+            <option value="300" selected>5 min</option>
+            <option value="1800">30 min</option>
+            <option value="3600">1 h</option>
+            <option value="86400">24 h</option>
+          </select>
+          <button id="btn-radar-send" class="btn btn-send">Viento</button>
+        </div>
+        <div class="pad"><span class="chip" id="membership-chip"></span></div>
+      </section>
+
+      <!-- VISTA: Chats -->
+      <section id="view-chats" class="view hidden">
+        <header class="topbar">
+          <h2 class="tab-title">Privados</h2>
+        </header>
+        <div id="chat-list" class="chat-list"></div>
+        <p id="chats-empty" class="muted pad">Toca a alguien en el Radar para abrir un hilo privado y tratar en la sombra.</p>
+      </section>
+
+      <!-- VISTA: Grupos -->
+      <section id="view-groups" class="view hidden">
+        <header class="topbar">
+          <h2 class="tab-title">Grupos (con condiciones)</h2>
+        </header>
+        <div class="pad">
+          <button class="btn btn-primary" id="btn-open-group-form">Crear grupo · 250 Takus</button>
+          <div id="group-list" class="chat-list"></div>
+          <p id="groups-empty" class="muted pad">Aún no perteneces a ningún grupo. Crea uno (por rango de zona o por invitación tipo Telegram) o únete con un código.</p>
+          <div class="card">
+            <p class="section-title">Unirme con un código TK-XXXXX</p>
+            <input id="grp-code-input" type="text" maxlength="10" placeholder="TK-XXXXX" autocomplete="off" />
+            <button class="btn btn-ghost" id="btn-join-code">Unirme</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- VISTA: Takus -->
+      <section id="view-takus" class="view hidden">
+        <header class="topbar"><h2 class="tab-title">Takus</h2></header>
+        <div class="pad">
+          <div class="wallet-grid">
+            <div class="wallet">
+              <span class="wallet-name">Sombra <span class="muted small">(diario)</span></span>
+              <span class="wallet-value" id="wallet-diario">100</span>
+            </div>
+            <div class="wallet gold">
+              <span class="wallet-name">Kuro <span class="muted small">(ganadas)</span></span>
+              <span class="wallet-value" id="wallet-kuro">0</span>
+            </div>
+          </div>
+          <div class="card">
+            <p class="muted small">Regla del piso: cada 24 h el monedero Sombra se completa hasta 100. Si te quedaron 30, recibes 70. Si tienes más de 100, no recargas.</p>
+            <button class="btn btn-ghost" id="btn-refresh-daily">Simular recarga diaria</button>
+            <span id="daily-msg" class="muted small"></span>
+          </div>
+          <h3 class="section-title">Usar Takus</h3>
+          <div id="takus-shop"></div>
+        </div>
+      </section>
+
+      <!-- VISTA: Perfil -->
+      <section id="view-profile" class="view hidden">
+        <header class="topbar"><h2 class="tab-title">Tu sombra</h2></header>
+        <div class="pad">
+          <div class="me-card">
+            <div id="me-avatar" class="avatar avatar-me">?</div>
+            <div>
+              <p class="me-name" id="me-name">—</p>
+              <p class="muted small" id="me-id">ID: —</p>
+              <p class="muted small" id="me-karma">Karma: 0</p>
+            </div>
+          </div>
+          <p class="muted small">Tu perfil vive SOLO en este dispositivo. Al borrar la app, desaparece. Las fotos de tu muro se muestran con tu permiso, foto por foto.</p>
+          <div class="card">
+            <h3 class="section-title">Foto de perfil</h3>
+            <label class="btn btn-ghost">Elegir imagen<input type="file" id="pfp-input" accept="image/*" class="hidden-input" /></label>
+          </div>
+          <div class="card">
+            <h3 class="section-title">Mi muro</h3>
+            <div id="my-wall" class="wall-grid"></div>
+            <label class="btn btn-ghost">+ Subir foto al muro<input type="file" id="wall-input" accept="image/*" class="hidden-input" /></label>
+            <button class="btn btn-ghost" id="btn-add-demo-pic">Añadir foto de ejemplo</button>
+          </div>
+          <div class="card">
+            <h3 class="section-title">Discreta+ (membresía)</h3>
+            <p class="muted small">Perímetro de zona extendido: de 20 km (modo normal) a 50 km. Solo afecta qué tan lejos alcanza tu radar y tus salas.</p>
+            <label class="switch-row"><span>Discreta+ · 50 km</span><input type="checkbox" id="opt-premium" /></label>
+          </div>
+          <div class="card">
+            <h3 class="section-title">Modo camuflaje</h3>
+            <label class="switch-row"><span>Avisos neutros en pantalla de bloqueo</span><input type="checkbox" id="opt-quiet" checked /></label>
+            <label class="switch-row"><span>PIN para abrir la app</span><input type="checkbox" id="opt-pin" /></label>
+          </div>
+          <button class="btn btn-danger" id="btn-wipe">Borrar todo en este dispositivo</button>
+        </div>
+      </section>
+
+    </main>
+
+    <nav class="tabbar">
+      <button class="tab-btn is-active" data-view="radar">Radar</button>
+      <button class="tab-btn" data-view="chats">Privados</button>
+      <button class="tab-btn" data-view="groups">Grupos</button>
+      <button class="tab-btn" data-view="takus">Takus</button>
+      <button class="tab-btn" data-view="profile">Yo</button>
+    </nav>
+  </div>
+
+  <!-- Hoja de perfil de usuario -->
+  <div id="profile-sheet" class="sheet hidden">
+    <div class="sheet-card">
+      <div class="sheet-head">
+        <div id="peer-avatar" class="avatar avatar-peer">?</div>
+        <div>
+          <p id="peer-name" class="pe-name">—</p>
+          <p class="muted small" id="peer-karma">Karma: 0</p>
+          <p class="muted small" id="peer-loc">Zona: —</p>
+        </div>
+      </div>
+      <h4 class="section-title">Muro</h4>
+      <div id="peer-wall" class="wall-grid"></div>
+      <p id="peer-wall-msg" class="muted small">Muro vacío o privado.</p>
+      <div class="sheet-actions">
+        <button id="btn-peer-chat" class="btn btn-primary">Hablar en privado</button>
+        <button id="btn-peer-block" class="btn btn-danger">Bloquear</button>
+      </div>
+      <button id="btn-sheet-close" class="btn btn-ghost">Cerrar</button>
+    </div>
+  </div>
+
+  <!-- Vista de chat privado -->
+  <div id="chat-view" class="chat-overlay hidden">
+    <header class="chat-head">
+      <button id="btn-chat-back" class="btn-icon">←</button>
+      <div class="chat-head-id"><span id="chat-peer-name">—</span></div>
+      <button id="btn-chat-options" class="btn-icon">⋯</button>
+    </header>
+    <div id="messages" class="messages"></div>
+    <div class="composer">
+      <button id="btn-attach" class="btn-icon" title="Adjuntar">+</button>
+      <input type="file" id="attach-input" class="hidden-input" accept="image/*" />
+      <textarea id="msg-input" rows="1" placeholder="Escribe en la sombra…"></textarea>
+      <button id="btn-send" class="btn btn-send">Sellador</button>
+    </div>
+    <div class="composer-opts">
+      <select id="composer-ttl">
+        <option value="0">Permanente</option>
+        <option value="300" selected>5 min</option>
+        <option value="3600">1 h</option>
+        <option value="86400">24 h</option>
+        <option value="604800">7 días</option>
+      </select>
+      <label class="switch-row small-row"><span>Tábula (llegar sellado)</span><input type="checkbox" id="composer-tabula" /></label>
+      <label class="switch-row small-row"><span>Una sola vista</span><input type="checkbox" id="composer-once" /></label>
+    </div>
+  </div>
+
+  <!-- Formulario: crear grupo -->
+  <div id="group-form" class="sheet hidden">
+    <div class="sheet-card">
+      <h3 class="section-title">Crear grupo · 250 Takus</h3>
+      <label class="lab" for="grp-name">Nombre</label>
+      <input id="grp-name" type="text" maxlength="30" placeholder="Nombre del grupo (ej. Nómadas del Loto)" autocomplete="off" />
+      <label class="lab" for="grp-cond">Condición de acceso</label>
+      <select id="grp-cond">
+        <option value="rango">Por rango de zona (quien esté a N km entra)</option>
+        <option value="enlace">Por invitación (código tipo Telegram)</option>
+      </select>
+      <div id="grp-radius-row" class="ctrl-row">
+        <label class="lab" for="grp-radius">Radio de alcance (km)</label>
+        <input type="number" id="grp-radius" min="1" max="50" value="10" />
+      </div>
+      <div class="sheet-actions">
+        <button id="btn-create-group" class="btn btn-primary">Crear y pagar</button>
+        <button id="btn-close-group-form" class="btn btn-ghost">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vista de chat de grupo -->
+  <div id="group-view" class="chat-overlay hidden">
+    <header class="chat-head">
+      <button id="btn-group-back" class="btn-icon">←</button>
+      <div class="chat-head-id"><span id="group-peer-name">—</span></div>
+      <span class="btn-icon">🅣</span>
+    </header>
+    <div id="group-messages" class="messages"></div>
+    <div class="composer">
+      <textarea id="group-input" rows="1" placeholder="Mensaje al grupo…"></textarea>
+      <button id="btn-group-send" class="btn btn-send">Lanzar</button>
+    </div>
+    <div class="composer-opts">
+      <select id="group-ttl">
+        <option value="0">Permanente</option>
+        <option value="300" selected>5 min</option>
+        <option value="3600">1 h</option>
+        <option value="86400">24 h</option>
+      </select>
+      <span class="muted small">El grupo vive mientras sus mensajes no expiren.</span>
+    </div>
+  </div>
+
+  <!-- Caja para romper sello Tábula -->
+  <div id="seal-box" class="seal-overlay hidden">
+    <div class="seal-card">
+      <p class="muted">Mensaje sellado con lacre digital</p>
+      <button id="btn-break" class="btn btn-primary">Mantener para romper el sello</button>
+    </div>
+  </div>
+
+  <!-- Caja de vista única -->
+  <div id="once-box" class="seal-overlay hidden">
+    <div class="once-card">
+      <img id="once-img" class="once-img" alt="Vista única" />
+      <p class="muted small">Esta imagen se mostrará una sola vez y se borrará.</p>
+      <button id="btn-once-close" class="btn btn-ghost">Cerrar</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/crypto.js"></script>
+  <script src="./js/live.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>
