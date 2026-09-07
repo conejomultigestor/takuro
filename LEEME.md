@@ -1,5 +1,9 @@
 # TAKURO v2 — en vivo para compartir
 
+**ESTÁ EN LÍNEA — link para compartir:**
+`https://conejomultigestor.github.io/takuro/`
+Relay: `wss://takuro.onrender.com/ws` (Render, plan free, se duerme a los 15 min de inactividad y despierta solo; la primera apertura tras dormir tarda ~30-60 s).
+
 Versión funcional para dar el link a otras personas:
 - **Front** en Vercel (estático, HTTPS). El GPS funciona en el móvil.
 - **Relay** en Render (WebSocket efímero, memoria).
