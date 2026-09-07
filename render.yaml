@@ -1,0 +1,11 @@
+# Render Blueprint para el relay de Takuro v2
+# Publica: https://dashboard.render.com/blueprints → este archivo
+services:
+  - type: web
+    name: takuro-relay
+    runtime: docker
+    plan: free
+    region: oregon
+    envVars:
+      - key: WS_ONLY
+        value: "1"
