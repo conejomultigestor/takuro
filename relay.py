@@ -32,7 +32,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public")
 HTTP_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("PORT", 8080))
-WS_ONLY = os.environ.get("WS_ONLY", "0") == "1"
+WS_ONLY = os.environ.get("WS_ONLY", "0") == "1" or os.environ.get("RENDER") == "true" or "RENDER_INSTANCE_ID" in os.environ
 
 SALAS = ["chisme", "ligar", "plaza"]
 
