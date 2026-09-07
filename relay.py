@@ -130,6 +130,20 @@ def now():
 def m_id():
     return os.urandom(6).hex()
 
+# Votación de salas (reglas YikYak): >50 negativos -> se elimina; >50 positivos -> se fija siempre
+UP_PIN = 50
+DOWN_DEL = 50
+
+def public_m(m):
+    """Versión 'pública' de un mensaje de sala: solo conteos, nunca quién votó."""
+    return {
+        "id": m["id"], "from": m["from"], "name": m["name"], "body": m["body"],
+        "room": m["room"], "zone": m["zone"], "ttl": m["ttl"], "at": m["at"],
+        "exp": m.get("exp", m["at"] + m["ttl"]),
+        "up": len(m.get("up", [])), "down": len(m.get("down", [])),
+        "pin": bool(m.get("pin")),
+    }
+
 async def send(ws, obj):
     try:
         await ws.send(obj)
@@ -174,7 +188,7 @@ async def route(pid, msg):
         room, zone = msg.get("room"), p["zone"]
         for m in STATE["feeds"].get(room, {}).get(zone, []):
             if not m.get("exp") or m["exp"] > now():
-                await send(ws, {"t": "feed", "m": m})
+                await send(ws, {"t": "feed", "m": public_m(m)})
 
     elif t == "unsub":
         p["rooms"] = [r for r in (p.get("rooms") or []) if r != msg.get("room")]
@@ -190,11 +204,58 @@ async def route(pid, msg):
             "ttl": min(int(msg.get("ttl") or 300), 86400),
             "at": now(),
             "exp": now() + min(int(msg.get("ttl") or 300), 86400),
+            "up": [], "down": [], "pin": False,
         }
         STATE["feeds"].setdefault(room, {}).setdefault(p["zone"], []).insert(0, m)
         for pid2, p2 in STATE["peers"].items():
             if p2["zone"] == p["zone"] and room in (p2.get("rooms") or []):
-                await send(p2["ws"], {"t": "feed", "m": m})
+                await send(p2["ws"], {"t": "feed", "m": public_m(m)})
+
+    elif t == "vote":
+        mid = msg.get("id")
+        v = 1 if msg.get("v") == 1 else -1
+        target = None
+        for room, zones in STATE["feeds"].items():
+            for zone, msgs in zones.items():
+                if zone != p["zone"]:
+                    continue
+                for m in msgs:
+                    if m["id"] == mid:
+                        target = (room, zone, m)
+                        break
+                if target:
+                    break
+            if target:
+                break
+        if not target:
+            await send(ws, {"t": "err", "why": "post_no_existe"})
+            return
+        room, zone, m = target
+        up = m.setdefault("up", [])
+        down = m.setdefault("down", [])
+        if pid in up:
+            up.remove(pid)
+        if pid in down:
+            down.remove(pid)
+        if v == 1:
+            up.append(pid)
+        else:
+            down.append(pid)
+        for pid2, p2 in STATE["peers"].items():
+            if p2["zone"] == zone and room in (p2.get("rooms") or []):
+                await send(p2["ws"], {"t": "vote", "id": mid, "room": room, "zone": zone,
+                                      "up": len(up), "down": len(down)})
+        if len(down) > DOWN_DEL:
+            STATE["feeds"][room][zone] = [x for x in STATE["feeds"][room][zone] if x["id"] != mid]
+            for pid2, p2 in STATE["peers"].items():
+                if p2["zone"] == zone and room in (p2.get("rooms") or []):
+                    await send(p2["ws"], {"t": "vote_del", "id": mid})
+        elif len(up) > UP_PIN and not m.get("pin"):
+            m["pin"] = True
+            m["exp"] = 0  # se fija para siempre (exento de la purga TTL)
+            for pid2, p2 in STATE["peers"].items():
+                if p2["zone"] == zone and room in (p2.get("rooms") or []):
+                    await send(p2["ws"], {"t": "vote_pin", "id": mid})
 
     elif t == "list_presence":
         await presence_msg(ws, p["zone"])
