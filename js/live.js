@@ -10,6 +10,7 @@ const Live = (() => {
     onFeed: null, onPresence: null, onDm: null, onDmOffline: null,
     onGroupMessage: null, onGroupCreated: null, onGroupJoined: null,
     onJoined: null, onError: null,
+    onVote: null, onVoteDel: null, onVotePin: null,
   };
 
   function connect(url, h) {
@@ -57,6 +58,12 @@ const Live = (() => {
       if (hooks.onGroupCreated) hooks.onGroupCreated(msg);
     } else if (t === "grp_joined") {
       if (hooks.onGroupJoined) hooks.onGroupJoined(msg);
+    } else if (t === "vote") {
+      if (hooks.onVote) hooks.onVote(msg);
+    } else if (t === "vote_del") {
+      if (hooks.onVoteDel) hooks.onVoteDel(msg.id);
+    } else if (t === "vote_pin") {
+      if (hooks.onVotePin) hooks.onVotePin(msg.id);
     } else if (t === "err") {
       if (hooks.onError) hooks.onError(msg);
     }
@@ -71,6 +78,7 @@ const Live = (() => {
     sub: (room) => send({ t: "sub", room }),
     unsub: (room) => send({ t: "unsub", room }),
     post: (room, body, ttl) => send({ t: "post", room, body, ttl }),
+    vote: (id, v) => send({ t: "vote", id, v }),
     dm: (to, packet, clientId) => send({ t: "dm_send", to, ...packet, client_id: clientId }),
     requestPresence: () => send({ t: "list_presence" }),
     createGroup: (name, cond, radius) => send({ t: "grp_create", name, cond, radius }),
