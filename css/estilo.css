@@ -122,6 +122,16 @@ input[type="range"] { flex: 1; accent-color: var(--brand2); }
 
 .like-btn { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 20px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
 
+/* votación de salas (arriba/abajo) */
+.vote-btn { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 20px; padding: 3px 10px; font-size: 12px; cursor: pointer; margin-right: 6px; }
+.vote-btn.is-on { color: var(--brand2); border-color: var(--brand2); }
+.vote-btn.down.is-on { color: #e0556e; border-color: #e0556e; }
+.msg.is-pinned { border-color: var(--brand2); }
+.msg-pin { font-size: 11px; color: var(--brand2); margin-bottom: 4px; }
+.ttl-hint { opacity: 0.85; margin-left: auto; }
+.zone-here { flex: 1; font-size: 13px; color: var(--text); }
+.btn-icon { margin-left: 8px; }
+
 /* ---------- Chats ---------- */
 .chat-list { padding: 8px 16px; display: grid; gap: 8px; }
 .chat-item { display: flex; align-items: center; gap: 12px; background: var(--bg2); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; cursor: pointer; }
