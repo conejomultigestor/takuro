@@ -11,6 +11,7 @@ const Live = (() => {
     onGroupMessage: null, onGroupCreated: null, onGroupJoined: null,
     onJoined: null, onError: null,
     onVote: null, onVoteDel: null, onVotePin: null,
+    onWallet: null, onDmAck: null, onProfileReply: null,
   };
 
   function connect(url, h) {
@@ -40,6 +41,14 @@ const Live = (() => {
     if (t === "hello") {
       myId = msg.id;
       if (hooks.onJoined) hooks.onJoined(myId);
+    } else if (t === "joined") {
+      if (hooks.onJoined) hooks.onJoined(myId, msg.wallet || null);
+    } else if (t === "wallet") {
+      if (hooks.onWallet) hooks.onWallet(msg);
+    } else if (t === "dm_ack") {
+      if (hooks.onDmAck) hooks.onDmAck(msg);
+    } else if (t === "profile_reply") {
+      if (hooks.onProfileReply) hooks.onProfileReply(msg);
     } else if (t === "feed") {
       if (hooks.onFeed) hooks.onFeed(msg.m);
     } else if (t === "presence") {
@@ -77,8 +86,11 @@ const Live = (() => {
     setInfo: (name, zone, radius, pub) => send({ t: "join", name, zone, radius, pub }),
     sub: (room) => send({ t: "sub", room }),
     unsub: (room) => send({ t: "unsub", room }),
-    post: (room, body, ttl) => send({ t: "post", room, body, ttl }),
-    vote: (id, v) => send({ t: "vote", id, v }),
+    post: (room, body, ttl, cr) => send({ t: "post", room, body, ttl, cr }),
+    vote: (id, v, cr) => send({ t: "vote", id, v, cr }),
+    refreshWallet: () => send({ t: "wallet_now" }),
+    profile: (id, cr) => send({ t: "profile", id, cr }),
+    setProfile: (wall) => send({ t: "set_profile", wall }),
     dm: (to, packet, clientId) => send({ t: "dm_send", to, ...packet, client_id: clientId }),
     requestPresence: () => send({ t: "list_presence" }),
     createGroup: (name, cond, radius) => send({ t: "grp_create", name, cond, radius }),
