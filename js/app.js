@@ -99,6 +99,7 @@
     { key: "chisme", name: "Muros que Oyen", tag: "chisme general", emoji: "🗣" },
     { key: "ligar", name: "La Casa del Té", tag: "ligar", emoji: "🍵" },
     { key: "plaza", name: "El Mercado", tag: "temas generales", emoji: "🗞" },
+    { key: "refugio", name: "El Refugio", tag: "sala global · sin zona", emoji: "🏮", global: true },
   ];
   const roomByKey = (k) => ROOMS.find((r) => r.key === k) || ROOMS[0];
   const RADIO_MIN = 2;
@@ -176,7 +177,18 @@
 
   function postText(text, ttl, botId, author, mine, room) {
     if (LIVE_MODE) {
-      Live.post(S.curRoom, text, ttl);
+      const item = {
+        id: uid(), botId: null, author,
+        text, ttl, at: Date.now(),
+        expiresAt: ttl > 0 ? Date.now() + ttl * 1000 : 0,
+        likes: 0, up: 0, down: 0,
+        myVote: 0, pin: false, liked: false, mine: true,
+        room: (mine ? S.curRoom : (room || S.curRoom)),
+      };
+      feed.unshift(item);
+      pendingPosts[item.id] = Date.now();
+      renderFeed();
+      Live.post(S.curRoom, text, ttl, item.id);
       return;
     }
     const item = {
@@ -243,6 +255,9 @@
   /* ---------------- tick principal ---------------- */
   function tick() {
     const now = Date.now();
+    if (LIVE_MODE) {
+      Object.keys(pendingPosts).forEach((id) => { if (now - pendingPosts[id] > 60000) delete pendingPosts[id]; });
+    }
     feed = feed.filter((f) => !f.expiresAt || f.expiresAt > now);
     Object.keys(S.chats).forEach((id) => {
       const c = S.chats[id];
@@ -356,10 +371,14 @@
     }).sort((a, b) => ((b.pin ? 1 : 0) - (a.pin ? 1 : 0)) || (b.at - a.at));
     const tag = $("#room-head-tag");
     if (tag) {
-      let txt = list.length + " vivos en tu perímetro (" + S.radius + " km";
-      if (!S.premium) txt += " · máx 20 · Discreta+ 50";
-      txt += ")";
-      tag.textContent = txt;
+      if (S.curRoom === "refugio") {
+        tag.textContent = "sala global · la oyen todos, sin importar la zona";
+      } else {
+        let txt = list.length + " vivos en tu perímetro (" + S.radius + " km";
+        if (!S.premium) txt += " · máx 20 · Discreta+ 50";
+        txt += ")";
+        tag.textContent = txt;
+      }
     }
     box.innerHTML = list.map((f) => {
       const who = f.mine ? "Tú (" + esc(S.name) + ")" : esc(f.author);
@@ -432,12 +451,13 @@
     return Math.floor(s / 3600) + "h";
   }
 
-  /* ---------------- salas (3 obligatorias) ---------------- */
+  /* ---------------- salas ---------------- */
   function renderRoomTabs() {
     const box = $("#room-tabs");
     box.innerHTML = ROOMS.map((r) =>
       '<button class="room-tab' + (r.key === S.curRoom ? " is-active" : "") + '" data-room="' + r.key + '">' +
       '<span class="room-emoji">' + r.emoji + '</span><span class="room-name">' + esc(r.name) + '</span>' +
+      (r.global ? '<span class="badge-live">global</span>' : '') +
       '<span class="room-tag">' + esc(r.tag) + '</span></button>'
     ).join("");
     box.querySelectorAll("[data-room]").forEach((el) => {
@@ -543,15 +563,10 @@
         radius: cond === "rango" ? radius : 0,
         members: [S.name], owner: S.name, msgs: [], live: true,
       };
-      let rest = cost;
-      const fromDiario = Math.min(S.wallets.diario, rest);
-      S.wallets.diario -= fromDiario; rest -= fromDiario;
-      if (rest > 0) S.wallets.kuro -= rest;
-      save();
       $("#group-form").classList.add("hidden");
-      renderGroups(); renderWallets();
+      renderGroups();
       Live.createGroup(name, cond, radius);
-      toast("Creando grupo en el relay… (cobrado 250 Takus)");
+      toast("Creando grupo en el relay… (se cobra 250 Takus)");
       return;
     }
     const g = {
@@ -724,6 +739,11 @@
     toast("Cobrado. " + item.label + " (demo)");
   }
   function doDailyRefill() {
+    if (LIVE_MODE) {
+      Live.refreshWallet();
+      toast("Monedero actualizado. En modo en vivo el piso (⇢ 100) lo aplica el relay cada 24 h.");
+      return;
+    }
     const day = new Date().toDateString();
     const last = new Date(S.lastRefill).toDateString();
     if (last === day) { toast("Ya recargaste hoy. Regresa mañana."); return; }
@@ -765,7 +785,8 @@
         w.mode = w.mode === "hidden" ? "public" : "hidden";
         save();
         renderMyWall();
-        toast("Foto ahora: " + (w.mode === "hidden" ? "oculta (piden permiso)" : "pública"));
+        syncProfileToRelay();
+        toast("Foto ahora: " + (w.mode === "hidden" ? "oculta (piden permiso)" : "pública · la ven en tu perfil"));
       });
     });
   }
@@ -813,19 +834,38 @@
     const b = botOf(botId);
     if (!b) return;
     sheetPeer = b;
-    if (!b.wall) b.wall = wallForBot(b);
+    if (!b.wall && !b.live) b.wall = wallForBot(b);
     $("#peer-name").textContent = b.name;
     $("#peer-karma").textContent = "Karma: " + b.karma;
     $("#peer-avatar").textContent = b.name.charAt(0).toUpperCase();
     const zone = ZONES.find((z) => z.name === b.zone);
-    $("#peer-loc").textContent = "Zona: " + b.zone + (zone ? " (radar " + S.radius + " km)" : "");
+    $("#peer-loc").textContent = "Zona: " + b.zone + (b.live ? " · misma zona que tú" : (zone ? " (radar " + S.radius + " km)" : ""));
     renderPeerWall();
     $("#profile-sheet").classList.remove("hidden");
     save();
+    if (b.live) Live.profile(botId);
   }
   function renderPeerWall() {
     const box = $("#peer-wall");
     const b = sheetPeer;
+    if (b.live) {
+      if (!b.wall) {
+        box.innerHTML = '<p class="muted small">Consultando su perfil público…</p>';
+        $("#peer-wall-msg").textContent = "";
+        return;
+      }
+      box.innerHTML = b.wall.map((w, i) =>
+        '<div class="wall-tile" data-open="' + i + '"><img src="' + w + '"/><span class="badge-tag">pública</span></div>'
+      ).join("");
+      $("#peer-wall-msg").textContent = b.wall.length ? "" : "Muro sin fotos públicas.";
+      box.querySelectorAll("[data-open]").forEach((el) => {
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          openOnce(b.wall[Number(el.getAttribute("data-open"))]);
+        });
+      });
+      return;
+    }
     box.innerHTML = b.wall.map((w) => {
       const granted = sheetGranted[b.id] && sheetGranted[b.id].includes(w.id);
       if (w.mode === "hidden" && !granted) {
@@ -908,9 +948,11 @@
       if (!p || !p.pub || !kp) { toast(p ? "Ese usuario no compartió su llave aún." : "Solo puedes escribirle si sigue en línea."); return; }
       const packet = await Crypto.seal(kp, p.pub, text);
       if (!packet) { toast("No se pudo cifrar."); return; }
-      Live.dm(currentPeer, packet, uid());
+      const m = { id: uid(), from: "me", text, ttl: 0, at: Date.now(), tabula: false, once: false, broken: true, img: null };
       if (!S.chats[currentPeer]) S.chats[currentPeer] = { name: p.name, msgs: [] };
-      S.chats[currentPeer].msgs.push({ id: "my_" + uid(), from: "me", text, ttl: 0, at: Date.now(), tabula: false, once: false, broken: true, img: null });
+      S.chats[currentPeer].msgs.push(m);
+      pendingDms[m.id] = currentPeer;
+      Live.dm(currentPeer, packet, m.id);
       input.value = "";
       save();
       renderChat();
@@ -937,6 +979,8 @@
     scheduleReply();
   }
   let pendingImg = null;
+  let pendingPosts = {}; // id -> timestamp de envío (para revertir si el relay rechaza)
+  let pendingDms = {};   // id del mensaje -> id del chat (para revertir si el relay rechaza)
   async function receiveDm(msg) {
     const kp = window.__takuro_kp;
     const p = Live.peer(msg.m.from);
@@ -1125,10 +1169,33 @@
   /* ---------------- arranque modo en vivo ---------------- */
   async function bootLive() {
     if (!Live.connect(CONFIG.relay, {
-      onJoined: (id) => {
+      onJoined: (id, wallet) => {
         LIVE_MODE = true;
+        if (wallet) { S.wallets = wallet; save(); renderWallets(); }
         if (!S.name) return;
         if (window.__takuro_kp) Live.setInfo(S.name, S.zone, S.radius, window.__takuro_kp.pubB64);
+        syncProfileToRelay();
+      },
+      onWallet: (msg) => {
+        S.wallets = { diario: msg.diario, kuro: msg.kuro };
+        save(); renderWallets();
+      },
+      onDmAck: (msg) => {
+        if (msg.id) delete pendingDms[msg.id];
+      },
+      onProfileReply: (msg) => {
+        liveProfiles[msg.id] = { name: msg.name, karma: msg.karma, zone: msg.zone, wall: msg.wall || [] };
+        if (sheetPeer && sheetPeer.id === msg.id && sheetPeer.live) {
+          sheetPeer.name = msg.name;
+          sheetPeer.karma = msg.karma;
+          sheetPeer.wall = liveProfiles[msg.id].wall;
+          $("#peer-name").textContent = msg.name;
+          $("#peer-karma").textContent = "Karma: " + msg.karma;
+          $("#peer-avatar").textContent = msg.name.charAt(0).toUpperCase();
+          const zone = ZONES.find((z) => z.name === msg.zone);
+          $("#peer-loc").textContent = "Zona: " + (msg.zone || S.zone) + (zone ? " (radar " + S.radius + " km)" : " · misma zona que tú");
+          renderPeerWall();
+        }
       },
       onFeed: (m) => {
         if (feed.some((f) => f.id === m.id)) return;
@@ -1168,7 +1235,17 @@
       onDm: (msg) => {
         receiveDm(msg);
       },
-      onDmOffline: (msg) => toast("Ese usuario se desconectó. Solo puedes escribirle si sigue en línea."),
+      onDmOffline: (msg) => {
+        if (msg.req && pendingDms[msg.req] !== undefined) {
+          const chatId = pendingDms[msg.req];
+          const c = S.chats[chatId];
+          if (c) c.msgs = c.msgs.filter((x) => x.id !== msg.req);
+          delete pendingDms[msg.req];
+          save();
+          if (currentPeer === chatId) renderChat();
+        }
+        toast("Ese usuario se desconectó. Solo puedes escribirle si sigue en línea.");
+      },
       onGroupMessage: (gid, m) => {
         const g = S.groups.find((x) => x.id === gid);
         if (g) { g.msgs.push(m); save(); if (currentGroup && currentGroup.id === gid) renderGroupChat(); renderGroups(); }
@@ -1195,7 +1272,32 @@
         save(); renderGroups();
         toast("Dentro de «" + msg.name + "».");
       },
-      onError: (msg) => toast(msg.why === "codigo_no_existe" ? "Código TK no existe en el relay." : "Error del relay."),
+      onError: (msg) => {
+        const req = msg && msg.req;
+        if (req && pendingPosts[req]) {
+          feed = feed.filter((x) => x.id !== req);
+          delete pendingPosts[req];
+          renderFeed();
+        }
+        if (req && pendingDms[req] !== undefined) {
+          const chatId = pendingDms[req];
+          const c = S.chats[chatId];
+          if (c) c.msgs = c.msgs.filter((x) => x.id !== req);
+          delete pendingDms[req];
+          save();
+          if (currentPeer === chatId) renderChat();
+        }
+        const WARN = {
+          sin_takus: "Takus insuficientes: no salió. Tu Sombra se recarga sola cada 24 h.",
+          codigo_no_existe: "Código TK no existe en el relay.",
+          post_no_existe: "Ese mensaje ya no existe aquí.",
+          no_acepta: "Solo puedes ver perfiles de quien está en tu misma zona.",
+          offline: "Esa persona se desconectó.",
+          nombre_invalido: "Nombre de grupo inválido.",
+        };
+        toast(WARN[msg.why] || "Error del relay.");
+        renderWallets();
+      },
     })) {
       LIVE_MODE = false;
       return;
@@ -1205,10 +1307,18 @@
   }
 
   let presence = null;
+  let liveProfiles = {}; // id -> {name, karma, zone, wall}
   function livePeerAsBot(id) {
     const p = Live.peer(id);
     if (!p) return null;
-    return { id, name: p.name, zone: S.zone, karma: 200, mood: 0.5, dist: 2, r: Math.random, wall: null, live: true };
+    const pr = liveProfiles[id];
+    return { id, name: p.name, zone: S.zone, karma: pr ? pr.karma : 120, mood: 0.5, dist: 2, r: Math.random, wall: pr ? pr.wall : null, live: true };
+  }
+
+  function syncProfileToRelay() {
+    if (!LIVE_MODE || !S.name) return;
+    const pub = S.wall.filter((w) => w.mode === "public").map((w) => w.img);
+    Live.setProfile(pub);
   }
 
   function bindEvents() {
@@ -1281,12 +1391,12 @@
     $("#wall-input").addEventListener("change", (e) => {
       const f = e.target.files[0]; if (!f) return;
       const rd = new FileReader();
-      rd.onload = () => { S.wall.push({ id: uid(), img: rd.result, mode: "hidden", once: false }); save(); renderMe(); toast("Subida al muro (oculta). Tócala para ponerla pública."); };
+      rd.onload = () => { S.wall.push({ id: uid(), img: rd.result, mode: "hidden", once: false }); save(); renderMe(); syncProfileToRelay(); toast("Subida al muro (oculta). Tócala para ponerla pública."); };
       rd.readAsDataURL(f);
     });
     $("#btn-add-demo-pic").addEventListener("click", () => {
       S.wall.push({ id: uid(), img: demoTile(), mode: "hidden", once: false });
-      save(); renderMe();
+      save(); renderMe(); syncProfileToRelay();
     });
     $("#opt-quiet").addEventListener("change", (e) => { S.quiet = e.target.checked; save(); });
     $("#opt-pin").addEventListener("change", (e) => {
