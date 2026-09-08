@@ -73,22 +73,11 @@
           </div>
           <div id="nearby-users" class="nearby-users"></div>
         </div>
+        <div class="pad">
+          <h3 class="feed-head-title">Salas generales</h3>
+          <p class="muted small">Toca una sala para abrir su ventana. Cada sala es un espacio aparte, con su propia conversación y votación (▲/▼).</p>
+        </div>
         <div id="room-tabs" class="room-tabs"></div>
-        <div class="feed-head">
-          <h3 id="feed-title">—</h3>
-          <span id="feed-count" class="muted small"></span>
-        </div>
-        <div id="radar-feed" class="feed"></div>
-        <div class="composer radar-composer">
-          <input id="radar-input" type="text" placeholder="Lanzar al viento…" autocomplete="off" />
-          <select id="radar-ttl" class="radar-ttl">
-            <option value="300" selected>5 min</option>
-            <option value="1800">30 min</option>
-            <option value="3600">1 h</option>
-            <option value="86400">24 h</option>
-          </select>
-          <button id="btn-radar-send" class="btn btn-send">Viento</button>
-        </div>
         <div class="pad"><span class="chip" id="membership-chip"></span></div>
       </section>
 
@@ -209,6 +198,26 @@
         <button id="btn-peer-block" class="btn btn-danger">Bloquear</button>
       </div>
       <button id="btn-sheet-close" class="btn btn-ghost">Cerrar</button>
+    </div>
+  </div>
+
+  <!-- Ventana de una sala general -->
+  <div id="room-view" class="chat-overlay hidden">
+    <header class="chat-head">
+      <button id="btn-room-back" class="btn-icon">←</button>
+      <div class="chat-head-id"><span id="room-head-title">—</span></div>
+      <span id="room-head-tag" class="muted small"></span>
+    </header>
+    <div id="room-msgs" class="messages"></div>
+    <div class="composer">
+      <input id="room-input" type="text" placeholder="Lanzar algo a la sala…" autocomplete="off" />
+      <select id="room-ttl">
+        <option value="300" selected>5 min</option>
+        <option value="1800">30 min</option>
+        <option value="3600">1 h</option>
+        <option value="86400">24 h</option>
+      </select>
+      <button id="btn-room-send" class="btn btn-send">Viento</button>
     </div>
   </div>
 
