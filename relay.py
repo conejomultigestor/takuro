@@ -34,7 +34,19 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public")
 HTTP_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("PORT", 8080))
 WS_ONLY = os.environ.get("WS_ONLY", "0") == "1" or os.environ.get("RENDER") == "true" or "RENDER_INSTANCE_ID" in os.environ
 
-SALAS = ["chisme", "ligar", "plaza"]
+SALAS = ["chisme", "ligar", "plaza", "refugio"]
+GLOBAL_ROOMS = {"refugio"}  # salas que NO dependen de la zona: todos comparten el mismo hilo
+
+# Economía (monedero único en memoria, compartido entre todos):
+#   - post en sala: 1 Sombra · DM: 1 Sombra · crear grupo: 250 Sombra
+#   - Regla del piso: cada día el monedero Sombra se completa hasta 100.
+#   - Recompensa: cuando un mensaje tuyo pasa de 500 ▲ netos, +10 Kuro (máx 10/día).
+POST_COST = 1
+DM_COST = 1
+GROUP_COST = 250
+LIKES_REWARD = 500
+REWARD_KURO = 10
+REWARD_MAX_DAY = 10
 
 # ---------------- WebSocket (RFC 6455) mínimo ----------------
 
@@ -144,6 +156,63 @@ def public_m(m):
         "pin": bool(m.get("pin")),
     }
 
+def today():
+    return time.strftime("%Y-%m-%d")
+
+def floor_wallet(p):
+    """Regla del piso: cada día el monedero Sombra se completa hasta 100."""
+    if p["day"] != today():
+        p["day"] = today()
+        if p["wallets"]["diario"] < 100:
+            p["wallets"]["diario"] = 100
+
+def wallet(p):
+    floor_wallet(p)
+    return {"diario": p["wallets"]["diario"], "kuro": p["wallets"]["kuro"]}
+
+def wallet_msg(p):
+    return {"t": "wallet", **wallet(p)}
+
+async def spend(ws, p, amount):
+    """Cobra un importe (primero Sombra, luego Kuro); responde el monedero actual."""
+    floor_wallet(p)
+    rest = amount
+    from_d = min(p["wallets"]["diario"], rest)
+    p["wallets"]["diario"] -= from_d
+    rest -= from_d
+    p["wallets"]["kuro"] -= rest
+    await send(ws, wallet_msg(p))
+
+async def maybe_reward(m):
+    """Recompensa a quien escribió el mensaje cuando pasa de 500 ▲ netos (+10 Kuro, máx 10/día)."""
+    net = len(m.get("up", [])) - len(m.get("down", []))
+    if net < LIKES_REWARD or m.get("rewarded"):
+        return
+    m["rewarded"] = True
+    a = STATE["peers"].get(m["from"])
+    if not a:
+        return
+    if a["rewardDay"] != today():
+        a["rewardDay"] = today()
+        a["rewardCount"] = 0
+    if a["rewardCount"] >= REWARD_MAX_DAY:
+        return
+    a["rewardCount"] += 1
+    a["wallets"]["kuro"] += REWARD_KURO
+    await send(a["ws"], wallet_msg(a))
+
+def scope(room, zone):
+    """Cada sala vive en su zona… salvo las globales (refugio), que viven en '__all__'."""
+    return "__all__" if room in GLOBAL_ROOMS else zone
+
+def feed_watchers(room, zone):
+    """Peers suscritos a una sala: su zona debe coincidir (o la sala es global)."""
+    watchers = []
+    for _pid2, p2 in STATE["peers"].items():
+        if room in (p2.get("rooms") or []) and (room in GLOBAL_ROOMS or p2["zone"] == zone):
+            watchers.append(p2["ws"])
+    return watchers
+
 async def send(ws, obj):
     try:
         await ws.send(obj)
@@ -180,13 +249,16 @@ async def route(pid, msg):
         p["zone"] = msg.get("zone")
         p["radius"] = msg.get("radius", 15)
         p["pub"] = msg.get("pub")          # clave ECDH pública (opaca para el relay)
-        await send(ws, {"t": "joined", "id": pid})
+        await send(ws, {"t": "joined", "id": pid, "wallet": wallet(p)})
         await broadcast_presence(p["zone"])
 
     elif t == "sub":
-        p["rooms"] = list(set((p.get("rooms") or []) + [msg.get("room")]))
-        room, zone = msg.get("room"), p["zone"]
-        for m in STATE["feeds"].get(room, {}).get(zone, []):
+        room = msg.get("room")
+        if room not in SALAS:
+            return
+        p["rooms"] = list(set((p.get("rooms") or []) + [room]))
+        z = scope(room, p["zone"])
+        for m in STATE["feeds"].get(room, {}).get(z, []):
             if not m.get("exp") or m["exp"] > now():
                 await send(ws, {"t": "feed", "m": public_m(m)})
 
@@ -197,19 +269,24 @@ async def route(pid, msg):
         room = msg.get("room")
         if room not in SALAS:
             return
+        if p["wallets"]["diario"] + p["wallets"]["kuro"] < POST_COST:
+            await send(ws, {"t": "err", "why": "sin_takus", "req": msg.get("cr")})
+            return
         m = {
-            "id": m_id(), "from": pid,
+            "id": (str(msg.get("cr"))[:40] if msg.get("cr") else m_id()),
+            "from": pid,
             "name": p["name"], "body": msg.get("body", ""),
-            "room": room, "zone": p["zone"],
+            "room": room, "zone": scope(room, p["zone"]),
             "ttl": min(int(msg.get("ttl") or 300), 86400),
             "at": now(),
             "exp": now() + min(int(msg.get("ttl") or 300), 86400),
             "up": [], "down": [], "pin": False,
         }
-        STATE["feeds"].setdefault(room, {}).setdefault(p["zone"], []).insert(0, m)
-        for pid2, p2 in STATE["peers"].items():
-            if p2["zone"] == p["zone"] and room in (p2.get("rooms") or []):
-                await send(p2["ws"], {"t": "feed", "m": public_m(m)})
+        STATE["feeds"].setdefault(room, {}).setdefault(m["zone"], []).insert(0, m)
+        await spend(ws, p, POST_COST)
+        for ws2 in feed_watchers(room, m["zone"]):
+            await send(ws2, {"t": "feed", "m": public_m(m)})
+        await maybe_reward(m)
 
     elif t == "vote":
         mid = msg.get("id")
@@ -217,7 +294,9 @@ async def route(pid, msg):
         target = None
         for room, zones in STATE["feeds"].items():
             for zone, msgs in zones.items():
-                if zone != p["zone"]:
+                if room in GLOBAL_ROOMS:
+                    pass  # cualquiera puede votar en salas globales
+                elif zone != p["zone"]:
                     continue
                 for m in msgs:
                     if m["id"] == mid:
@@ -228,7 +307,7 @@ async def route(pid, msg):
             if target:
                 break
         if not target:
-            await send(ws, {"t": "err", "why": "post_no_existe"})
+            await send(ws, {"t": "err", "why": "post_no_existe", "req": msg.get("cr")})
             return
         room, zone, m = target
         up = m.setdefault("up", [])
@@ -241,21 +320,19 @@ async def route(pid, msg):
             up.append(pid)
         else:
             down.append(pid)
-        for pid2, p2 in STATE["peers"].items():
-            if p2["zone"] == zone and room in (p2.get("rooms") or []):
-                await send(p2["ws"], {"t": "vote", "id": mid, "room": room, "zone": zone,
-                                      "up": len(up), "down": len(down)})
+        for ws2 in feed_watchers(room, zone):
+            await send(ws2, {"t": "vote", "id": mid, "room": room, "zone": zone,
+                             "up": len(up), "down": len(down)})
         if len(down) > DOWN_DEL:
             STATE["feeds"][room][zone] = [x for x in STATE["feeds"][room][zone] if x["id"] != mid]
-            for pid2, p2 in STATE["peers"].items():
-                if p2["zone"] == zone and room in (p2.get("rooms") or []):
-                    await send(p2["ws"], {"t": "vote_del", "id": mid})
+            for ws2 in feed_watchers(room, zone):
+                await send(ws2, {"t": "vote_del", "id": mid})
         elif len(up) > UP_PIN and not m.get("pin"):
             m["pin"] = True
             m["exp"] = 0  # se fija para siempre (exento de la purga TTL)
-            for pid2, p2 in STATE["peers"].items():
-                if p2["zone"] == zone and room in (p2.get("rooms") or []):
-                    await send(p2["ws"], {"t": "vote_pin", "id": mid})
+            for ws2 in feed_watchers(room, zone):
+                await send(ws2, {"t": "vote_pin", "id": mid})
+        await maybe_reward(m)
 
     elif t == "list_presence":
         await presence_msg(ws, p["zone"])
@@ -264,19 +341,26 @@ async def route(pid, msg):
         to = msg.get("to")
         p2 = STATE["peers"].get(to)
         if not p2:
-            await send(ws, {"t": "dm_offline", "to": to})
+            await send(ws, {"t": "dm_offline", "to": to, "req": msg.get("client_id")})
+            return
+        if p["wallets"]["diario"] + p["wallets"]["kuro"] < DM_COST:
+            await send(ws, {"t": "err", "why": "sin_takus", "req": msg.get("client_id")})
             return
         await send(p2["ws"], {"t": "dm", "m": {
             "id": m_id(), "from": pid, "from_name": p["name"],
             "ct": msg.get("ct"), "iv": msg.get("iv"),
             "at": now(),
         }})
+        await spend(ws, p, DM_COST)
         await send(ws, {"t": "dm_ack", "id": msg.get("client_id"), "to": to})
 
     elif t == "grp_create":
         name = (msg.get("name") or "").strip()[:30]
         if len(name) < 2:
-            await send(ws, {"t": "err", "why": "nombre_invalido"})
+            await send(ws, {"t": "err", "why": "nombre_invalido", "req": msg.get("cr")})
+            return
+        if p["wallets"]["diario"] + p["wallets"]["kuro"] < GROUP_COST:
+            await send(ws, {"t": "err", "why": "sin_takus", "req": msg.get("cr")})
             return
         gid = "grp_" + m_id()
         j = 0
@@ -289,7 +373,39 @@ async def route(pid, msg):
         STATE["groups"][code] = g
         STATE["code_of"][gid] = code
         p["groups"] = (p.get("groups") or []) + [gid]
+        await spend(ws, p, GROUP_COST)
         await send(ws, {"t": "grp_created", "id": gid, "code": code})
+
+    elif t == "set_profile":
+        wall = msg.get("wall")
+        if isinstance(wall, list):
+            clean = [w for w in wall if isinstance(w, str) and len(w) <= 200000][:6]
+            if sum(len(w) for w in clean) <= 600000:
+                p["wall"] = clean
+                await send(ws, {"t": "profile_ok"})
+
+    elif t == "profile":
+        tid = msg.get("id")
+        if not tid:
+            return
+        other = STATE["peers"].get(tid)
+        if not other:
+            await send(ws, {"t": "err", "why": "offline", "req": msg.get("cr")})
+            return
+        if other is not p and p["zone"] != other["zone"]:
+            await send(ws, {"t": "err", "why": "no_acepta", "req": msg.get("cr")})
+            return
+        karma = 0
+        for _room, zones in STATE["feeds"].items():
+            for msgs in zones.values():
+                for m in msgs:
+                    if m["from"] == tid:
+                        karma += max(0, len(m.get("up", [])) - len(m.get("down", [])))
+        await send(ws, {"t": "profile_reply", "id": tid, "name": other["name"],
+                        "zone": other["zone"], "karma": karma + 20, "wall": other.get("wall") or []})
+
+    elif t == "wallet_now":
+        await send(ws, wallet_msg(p))
 
     elif t == "grp_join":
         code = (msg.get("code") or "").upper().replace("TK-", "")
@@ -341,7 +457,7 @@ async def broadcast_presence(zone):
 
 async def handle_peer(ws):
     peer_id = "p_" + os.urandom(8).hex()
-    STATE["peers"][peer_id] = {"ws": ws, "name": "Anónimo", "zone": None, "radius": 15, "pub": None, "rooms": [], "groups": [], "since": now()}
+    STATE["peers"][peer_id] = {"ws": ws, "name": "Anónimo", "zone": None, "radius": 15, "pub": None, "rooms": [], "groups": [], "wall": [], "wallets": {"diario": 100, "kuro": 0}, "day": "", "rewardDay": "", "rewardCount": 0, "since": now()}
     await send(ws, {"t": "hello", "id": peer_id})
     try:
         while True:
