@@ -343,9 +343,10 @@
     });
   }
 
-  /* ---------------- render: feed ---------------- */
+  /* ---------------- render: feed de la sala abierta ---------------- */
   function renderFeed() {
-    const box = $("#radar-feed");
+    const box = $("#room-msgs");
+    if (!box) return;
     const list = feed.filter((f) => {
       if (f.room && f.room !== S.curRoom) return false;
       const b = f.botId ? bots.find((x) => x.id === f.botId) : null;
@@ -353,9 +354,13 @@
       if (f.botId && (!b || b.zone !== S.zone || !inPerimeter(b))) return false;
       return true;
     }).sort((a, b) => ((b.pin ? 1 : 0) - (a.pin ? 1 : 0)) || (b.at - a.at));
-    $("#feed-count").textContent = list.length + " vivos en tu perímetro (" + S.radius + " km";
-    if (!S.premium) $("#feed-count").textContent += " · máx 20 · Discreta+ 50";
-    $("#feed-count").textContent += ")";
+    const tag = $("#room-head-tag");
+    if (tag) {
+      let txt = list.length + " vivos en tu perímetro (" + S.radius + " km";
+      if (!S.premium) txt += " · máx 20 · Discreta+ 50";
+      txt += ")";
+      tag.textContent = txt;
+    }
     box.innerHTML = list.map((f) => {
       const who = f.mine ? "Tú (" + esc(S.name) + ")" : esc(f.author);
       const pinned = !!f.pin;
@@ -436,12 +441,15 @@
       '<span class="room-tag">' + esc(r.tag) + '</span></button>'
     ).join("");
     box.querySelectorAll("[data-room]").forEach((el) => {
-      el.addEventListener("click", () => setRoom(el.getAttribute("data-room")));
+      el.addEventListener("click", () => {
+        setRoom(el.getAttribute("data-room"));
+        openRoom();
+      });
     });
     const cur = roomByKey(S.curRoom);
-    const title = $("#feed-title");
-    if (title) title.textContent = cur.emoji + " " + cur.name + " — " + cur.tag;
-    const ph = $("#radar-input");
+    const title = $("#room-head-title");
+    if (title) title.textContent = cur.emoji + " " + cur.name;
+    const ph = $("#room-input");
     if (ph) ph.placeholder = "Lanzar algo al " + cur.name.toLowerCase() + "…";
   }
   function setRoom(key) {
@@ -453,6 +461,16 @@
     save();
     renderRoomTabs();
     renderFeed();
+  }
+  function openRoom() {
+    renderRoomTabs();
+    const rv = $("#room-view");
+    if (rv) rv.classList.remove("hidden");
+    renderFeed();
+  }
+  function closeRoom() {
+    const rv = $("#room-view");
+    if (rv) rv.classList.add("hidden");
   }
 
   /* ---------------- perímetro: radio por membresía ---------------- */
@@ -1226,14 +1244,15 @@
       }, () => toast("No pude leer el GPS. Sigues en tu zona: " + (S.zone || "—")));
     });
 
-    $("#btn-radar-send").addEventListener("click", () => {
-      const text = $("#radar-input").value.trim();
+    $("#btn-room-send").addEventListener("click", () => {
+      const text = $("#room-input").value.trim();
       if (!text) return;
-      const ttl = Number($("#radar-ttl").value);
+      const ttl = Number($("#room-ttl").value);
       postText(text, ttl, null, S.name, true);
-      $("#radar-input").value = "";
+      $("#room-input").value = "";
     });
-    $("#radar-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#btn-radar-send").click(); });
+    $("#room-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#btn-room-send").click(); });
+    $("#btn-room-back").addEventListener("click", closeRoom);
 
     // chats
     $("#chat-list").addEventListener("click", (e) => {
